@@ -1,31 +1,70 @@
 import typing
+from functools import total_ordering
 
 import pygame
 import rainbowize
 import random
+import math
 
 SIZE = (320, 240)
 INSET = 8
+
 N_BALLS = 15
 N_GOALS = 5
 
-IMPLUSE_FACTOR = 500
-FRICTION = 15
+BALL_RADIUS = 8
+IMPLUSE_FACTOR = 100
+FRICTION = 20
+
+MAX_SHOT_POWER = 75
+
 
 class Problem:
     """Configuration of balls & level geometry."""
 
-    def __init__(self, cue_ball_xy, ball_xys, goal_xys, rect):
-        self.cue_ball_xy = cue_ball_xy
-        self.ball_xys = ball_xys
+    def __init__(self, ball_xys, goal_xys, rect):
+        self.cue_ball_xy = ball_xys[0]
+        self.ball_xys = ball_xys[1:]
         self.goal_xys = goal_xys
         self.rect = rect
 
+@total_ordering
 class Solution:
     """Sequence of shots."""
 
     def __init__(self, data):
         self.data = data
+        self.fitness = float('inf')
+
+    def __lt__(self, other):
+        return self.fitness < other.fitness
+
+    @classmethod
+    def create_random_data(cls, size):
+        return [random.random() for _ in range(size)]
+
+class ShotSequenceSolution(Solution):
+
+    def __init__(self, data):
+        super().__init__(data)
+
+    def num_shots(self):
+        return len(self.data) // 2
+
+    def get_shot(self, idx) -> pygame.Vector2:
+        if idx * 2 >= len(self.data):
+            return pygame.Vector2()
+        else:
+            angle = self.data[idx // 2]
+            power = self.data[idx // 2 + 1]
+            vec = pygame.Vector2()
+            vec.from_polar((angle * 360, power * MAX_SHOT_POWER))
+            return vec
+
+    @classmethod
+    def create_random(cls, num_shots):
+        data = Solution.create_random_data(num_shots * 2)
+        return ShotSequenceSolution(data)
 
 
 BALL_UID_COUNTER = 0
@@ -37,10 +76,10 @@ def _next_uid():
 
 class Ball:
 
-    def __init__(self, xy, vel, radius=8, color="plum", is_cue=False):
+    def __init__(self, xy, vel, color="plum", is_cue=False):
         self.xy = pygame.Vector2(xy)
         self.vel = pygame.Vector2(vel)
-        self.radius = radius
+        self.radius = BALL_RADIUS
         self.color = color
         self.is_cue = is_cue
         self.uid = _next_uid()
@@ -59,8 +98,9 @@ class Ball:
             else:
                 self.vel += friction_vec
 
-    def draw(self, screen, at_xy):
-        pygame.draw.circle(screen, self.color, at_xy, self.radius, width=1)
+    def draw(self, screen, at_xy, color=None):
+        pygame.draw.circle(screen, self.color if color is None else color,
+                           at_xy, self.radius, width=1)
 
     def __hash__(self):
         return self.uid
@@ -70,13 +110,14 @@ class Ball:
 
 class ProblemSolver:
 
-    def __init__(self, problem, solution):
+    def __init__(self, problem: Problem, solution: ShotSequenceSolution):
         # initial conditions
         self.problem = problem
         self.solution = solution
         self.t_limit = 15  # seconds
 
         # actual state of the simulation
+        self.shot_idx = -1
         self.t = 0
         self.goal_xys = [pygame.Vector2(gxy) for gxy in problem.goal_xys]
         self.balls = [Ball(bxy, (0, 0)) for bxy in problem.ball_xys]
@@ -85,9 +126,14 @@ class ProblemSolver:
     def update(self, dt):
         self.t += dt
 
-        if self.is_everything_stationary():
-            # either finish or apply next shot
-            pass
+        if self.shot_idx == -1 or self.is_everything_stationary():
+            if self.shot_idx < self.solution.num_shots() - 1:
+                self.shot_idx += 1
+                next_shot = self.solution.get_shot(self.shot_idx)
+                self.cue_ball.vel.x = next_shot.x
+                self.cue_ball.vel.y = next_shot.y
+            else:
+                self.solution.fitness = self.get_fitness()
 
         # simulate movement
         for b in self.all_balls():
@@ -123,6 +169,12 @@ class ProblemSolver:
                 total_impulse = IMPLUSE_FACTOR * sum(impulses[ball], start=pygame.Vector2())
                 ball.vel += total_impulse * dt
 
+    def get_dist_to_nearest_goal(self, xy):
+        best = float('inf')
+        for goal_xy in self.goal_xys:
+            best = min(best, point_dist(goal_xy, xy))
+        return best
+
     def all_balls(self) -> typing.Generator[Ball, None, None]:
         yield self.cue_ball
         for b in self.balls:
@@ -132,18 +184,22 @@ class ProblemSolver:
         return all([b.vel.magnitude() <= 0.0001 for b in self.all_balls()])
 
     def is_done(self):
-        return False
+        return self.solution.fitness != float('inf')
 
-    def get_fitness(self, problem, solution):
-        if self.is_done():
-            return 0
+    def get_fitness(self):
+        if self.solution.fitness != float('inf'):
+            return self.solution.fitness
         else:
-            raise ValueError("Not finished simulating yet")
+            total = 0
+            for ball in self.all_balls():
+                if not ball.is_cue:
+                    total += self.get_dist_to_nearest_goal(ball.xy)
+            return total
 
 
 class AnimatedProblemSolver(ProblemSolver):
 
-    def __init__(self, problem, solution):
+    def __init__(self, problem: Problem, solution: ShotSequenceSolution):
         super().__init__(problem, solution)
 
     def draw(self, screen):
@@ -156,7 +212,9 @@ class AnimatedProblemSolver(ProblemSolver):
         self.cue_ball.draw(screen, self.cue_ball.xy)
 
         for target_ball in self.balls:
-            target_ball.draw(screen, target_ball.xy)
+            fitness = self.get_dist_to_nearest_goal(target_ball.xy)
+            color = pygame.Color("green").lerp("red", min(1, (fitness / (self.problem.rect.width // 3))))
+            target_ball.draw(screen, target_ball.xy, color=color)
 
 
 def rand_point_in_rect(rect):
@@ -164,19 +222,32 @@ def rand_point_in_rect(rect):
             random.randint(rect.y, rect.y + rect.height - 1))
 
 
+def point_dist(p1, p2):
+    dx = p1[0] - p2[0]
+    dy = p1[1] - p2[1]
+    return math.sqrt(dx * dx + dy * dy)
+
 def create_sample_problem():
     playing_rect = pygame.Rect(INSET, INSET, SIZE[0] - INSET * 2, SIZE[1] - INSET * 2)
-    spawn_rect = playing_rect.inflate(-8, -8)
-    sample_problem = Problem((SIZE[0] // 2, SIZE[1] // 2),
-                             [rand_point_in_rect(spawn_rect) for _ in range(N_BALLS)],
-                             [rand_point_in_rect(spawn_rect) for _ in range(N_GOALS)],
-                             playing_rect)
-    sample_solution = Solution([])
+    spawn_rect = playing_rect.inflate(-BALL_RADIUS * 2, -BALL_RADIUS * 2)
 
-    solver = AnimatedProblemSolver(sample_problem, sample_solution)
-    solver.cue_ball.vel = pygame.Vector2(160, 10)
+    balls = [(SIZE[0] // 2, SIZE[1] // 2)]
+    while len(balls) < N_BALLS:
+        xy = rand_point_in_rect(spawn_rect)
+        not_colliding = True
+        for b_xy in balls:
+            if point_dist(xy, b_xy) <= BALL_RADIUS * 2:
+                not_colliding = False
+                break
+        if not_colliding:
+            balls.append(xy)
 
-    return solver
+    goals = [rand_point_in_rect(spawn_rect) for _ in range(N_GOALS)]
+
+    sample_problem = Problem(balls, goals, playing_rect)
+    sample_solution = ShotSequenceSolution.create_random(3)
+
+    return AnimatedProblemSolver(sample_problem, sample_solution)
 
 
 if __name__ == "__main__":
@@ -187,6 +258,8 @@ if __name__ == "__main__":
     dt = 0
 
     solver = create_sample_problem()
+
+    font = pygame.Font(None, size=16)
 
     running = True
     while running:
@@ -199,8 +272,19 @@ if __name__ == "__main__":
                 elif e.key == pygame.K_r:
                     solver = create_sample_problem()
 
-        solver.update(dt)
+        solver.update(1 / 60)  # fixed timestep for consistency's sake
         solver.draw(screen)
+
+        text_y = INSET + 2
+        fitness_text = f"Fitness: {solver.get_fitness():.2f}"
+        fitness_surf = font.render(fitness_text, True, "snow" if not solver.is_done() else "yellow")
+        screen.blit(fitness_surf, (INSET + 2, text_y))
+        text_y += fitness_surf.get_height() + 2
+
+        shot_text = f"Shot: {solver.shot_idx + 1}"
+        shot_surf = font.render(shot_text, True, "snow")
+        screen.blit(shot_surf, (INSET + 2, text_y))
+        text_y += shot_surf.get_height() + 2
 
         dt = clock.tick(60) / 1000
         pygame.display.flip()
