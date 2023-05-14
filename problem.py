@@ -9,38 +9,41 @@ import math
 SIZE = (320, 240)
 INSET = 8
 
-N_BALLS = 4
-N_GOALS = 3
-N_SHOTS = 1
+N_CUE_BALLS = 2
+N_BALLS = 2
+N_GOALS = 1
 
 BALL_RADIUS = 8
 IMPLUSE_FACTOR = 500
 FRICTION = 40
 
-MAX_SHOT_POWER = 500
+MAX_SHOT_POWER = 250
 
 SOLUTION_TIME_LIMIT = 15  # seconds
 TIME_STEP = 1 / 60
 
 POPULATION_SIZE = 32
 
-MUTATION_CHANCE = 0.25
-SWAP_CHANCE = 0.30
-LERP_CHANCE = 0.40
-NOISE_CHANCE_PER_IDX = 0.25
-NOISE_SIGMA = 0.25
+BEST_ITEM_SELECTION_PROBABILITY = 0.1
+MUTATION_CHANCE_PER_IDX = 1 / N_CUE_BALLS
+MUTATION_RANGE = 0.3
+CROSS_CHANCE = 0.1
 
 
 class Problem:
     """Configuration of balls & level geometry."""
 
-    def __init__(self, ball_xys, goal_xys, rect):
-        self.cue_ball_xy = ball_xys[0]
-        self.ball_xys = ball_xys[1:]
+    def __init__(self, cue_ball_xys, ball_xys, goal_xys, rect, solution_producer):
+        self.cue_ball_xys = cue_ball_xys
+        self.ball_xys = ball_xys
         self.goal_xys = goal_xys
         self.rect = rect
 
+        self.solution_producer = solution_producer
         self.cached_solutions = {}
+
+    def new_random_solution(self):
+        return self.solution_producer()
 
 @total_ordering
 class Solution:
@@ -64,9 +67,22 @@ class Solution:
         new_data = [(d1 + weight * (d2 - d1)) for d1, d2 in zip(self.data, other.data)]
         return self.create_new(new_data)
 
-    def jibble(self, amount):
-        new_data = [(d + 2 * (random.random() - 0.5) * amount) % 1.0 for d in self.data]
+    def mutate(self, p_per_idx, mutate_range):
+        new_data = [((d + 2 * (random.random() - 0.5) * mutate_range) % 1.0
+                     if random.random() < p_per_idx else d) for d in self.data]
         return self.create_new(new_data)
+
+    def cross(self, other):
+        cross_idx = random.randint(0, len(self.data) - 1)
+        new_data_1 = self.data[:cross_idx] + other.data[cross_idx:]
+        new_data_2 = other.data[:cross_idx] + self.data[cross_idx:]
+        return self.create_new(new_data_1), self.create_new(new_data_2)
+
+    def distance_to(self, other):
+        tot_sum = 0
+        for d1, d2 in zip(self.data, other.data):
+            tot_sum += (d1 - d2) * (d1 - d2)
+        return math.sqrt(tot_sum)
 
     def __eq__(self, other):
         return self.data == other.data
@@ -97,8 +113,8 @@ class ShotSequenceSolution(Solution):
         if idx * 2 >= len(self.data):
             return pygame.Vector2()
         else:
-            angle = self.data[idx // 2]
-            power = self.data[idx // 2 + 1]
+            angle = self.data[idx * 2]
+            power = self.data[idx * 2 + 1]
             vec = pygame.Vector2()
             vec.from_polar((power * MAX_SHOT_POWER, angle * 360))
             return vec
@@ -158,12 +174,12 @@ class ProblemSolver:
         self.t_limit = SOLUTION_TIME_LIMIT
 
         # actual state of the simulation
+        self.started = False
         self.done = False
-        self.shot_idx = -1
         self.t = 0
         self.goal_xys = [pygame.Vector2(gxy) for gxy in problem.goal_xys]
         self.balls = [Ball(bxy, (0, 0)) for bxy in problem.ball_xys]
-        self.cue_ball = Ball(problem.cue_ball_xy, (0, 0), color="snow", is_cue=True)
+        self.cue_balls = [Ball(cxy, (0, 0), color="snow", is_cue=True) for cxy in problem.cue_ball_xys]
 
     def update(self, dt):
         self.t += dt
@@ -171,16 +187,16 @@ class ProblemSolver:
         if self.t > self.t_limit:
             self.done = True
 
-        if self.shot_idx == -1 or self.is_everything_stationary():
-            if self.shot_idx < self.solution.num_shots() - 1:
-                self.shot_idx += 1
-                next_shot = self.solution.get_shot(self.shot_idx)
-                self.cue_ball.vel.x = next_shot.x
-                self.cue_ball.vel.y = next_shot.y
-            else:
-                self.done = True
-                if self.solution.fitness == float('inf'):
-                    self.solution.fitness = self.get_fitness()
+        if not self.started:
+            for idx, cue in enumerate(self.cue_balls):
+                shot = self.solution.get_shot(idx)
+                cue.vel.x = shot.x
+                cue.vel.y = shot.y
+            self.started = True
+        elif self.is_everything_stationary() or self.t >= SOLUTION_TIME_LIMIT:
+            self.done = True
+            if self.solution.fitness == float('inf'):
+                self.solution.fitness = self.get_fitness()
 
         # simulate movement
         for b in self.all_balls():
@@ -223,7 +239,8 @@ class ProblemSolver:
         return best
 
     def all_balls(self) -> typing.Generator[Ball, None, None]:
-        yield self.cue_ball
+        for c in self.cue_balls:
+            yield c
         for b in self.balls:
             yield b
 
@@ -253,7 +270,8 @@ class AnimatedProblemSolver(ProblemSolver):
         for gxy in self.goal_xys:
             pygame.draw.circle(screen, "yellow", gxy, 10, width=1)
 
-        self.cue_ball.draw(screen, self.cue_ball.xy)
+        for cue in self.cue_balls:
+            cue.draw(screen, cue.xy)
 
         for target_ball in self.balls:
             fitness = self.get_dist_to_nearest_goal(target_ball.xy) + 1
@@ -273,10 +291,12 @@ def point_dist(p1, p2):
 
 def create_sample_problem() -> Problem:
     playing_rect = pygame.Rect(INSET, INSET, SIZE[0] - INSET * 2, SIZE[1] - INSET * 2)
+    playing_rect.y += 48
+    playing_rect.height -= 48
     spawn_rect = playing_rect.inflate(-BALL_RADIUS * 2, -BALL_RADIUS * 2)
 
-    balls = [(SIZE[0] // 2, SIZE[1] // 2)]
-    while len(balls) < N_BALLS:
+    balls = [(SIZE[0] // 2, SIZE[1] // 2)]  # always put a cue ball in middle
+    while len(balls) < N_BALLS + N_CUE_BALLS:
         xy = rand_point_in_rect(spawn_rect)
         not_colliding = True
         for b_xy in balls:
@@ -286,27 +306,18 @@ def create_sample_problem() -> Problem:
         if not_colliding:
             balls.append(xy)
 
+    cue_balls = balls[:N_CUE_BALLS]
+    balls = balls[N_CUE_BALLS:]
     goals = [rand_point_in_rect(spawn_rect) for _ in range(N_GOALS)]
 
-    return Problem(balls, goals, playing_rect)
+    return Problem(cue_balls, balls, goals, playing_rect,
+                   lambda: ShotSequenceSolution.create_random(N_CUE_BALLS))
 
 
 class SolutionManager:
 
-    def __init__(self, problem,
-                 solution_generator,
-                 pop_size=POPULATION_SIZE,
-                 mutation_rate=MUTATION_CHANCE,
-                 swap_rate=SWAP_CHANCE,
-                 preserve_best=False):
+    def __init__(self, problem):
         self.problem = problem
-        self.solution_generator = solution_generator
-
-        self.size = pop_size
-        self.mutation_rate = mutation_rate
-        self.swap_rate = swap_rate
-        self.preserve_best = preserve_best
-
         self.generations = []
 
     def get_current_generation(self):
@@ -327,32 +338,62 @@ class SolutionManager:
             solution.fitness = solver.get_fitness()
         return solution
 
+    def do_rank_selection(self, items, p=BEST_ITEM_SELECTION_PROBABILITY):
+        rng = random.random()
+        for it in items:  # TODO just solve it
+            if rng < p:
+                return it
+            else:
+                rng *= (1 - p)
+        return items[-1]
+
     def create_next_generation(self):
         if len(self.generations) == 0:
-            next_gen = [self.evaluate(self.solution_generator()) for _ in range(self.size)]
+            next_gen = [self.evaluate(self.problem.new_random_solution()) for _ in range(POPULATION_SIZE)]
         else:
             cur_gen = self.get_current_generation()
-            weights = [1 / s.fitness for s in cur_gen]
+            cur_gen_by_fitness = list(cur_gen)
+            cur_gen_by_fitness.sort()
 
-            next_gen = []
-            while len(next_gen) < self.size:
-                rng = random.random()
-
-                if rng < MUTATION_CHANCE:
-                    new_solution = self.solution_generator()
+            # survival
+            survivors = []
+            while len(survivors) < POPULATION_SIZE:
+                if len(survivors) == 0:
+                    next_item = self.do_rank_selection(cur_gen_by_fitness)
                 else:
-                    s1, s2 = random.choices(cur_gen, weights, k=2)
-                    s3 = self.evaluate(s1.lerp(s2, weight=0.333 + 0.333 * random.random()))
-                    if s3.fitness <= min(s1.fitness, s2.fitness):
-                        new_solution = s3
-                    else:
-                        new_solution = min(s1, s2)
+                    cur_gen_by_diversity = list(cur_gen_by_fitness)
+                    cur_gen_by_diversity.sort(key=lambda item: -sum(item.distance_to(other) for other in survivors))
+                    items = {s: idx * idx for idx, s in enumerate(cur_gen_by_fitness)}
+                    for idx, s in enumerate(cur_gen_by_diversity):
+                        items[s] = math.sqrt(items[s] + idx * idx)
+                    items_by_fitdiv = list(cur_gen_by_diversity)
+                    random.shuffle(items_by_fitdiv)
+                    items_by_fitdiv.sort(key=lambda item: items[item])
 
-                if new_solution in next_gen:
-                    new_solution = new_solution.jibble(0.25)
+                    next_item = self.do_rank_selection(items_by_fitdiv)
+                survivors.append(next_item)
 
-                next_gen.append(self.evaluate(new_solution))
+            # crossover
+            next_gen = []
+            while len(survivors) > 0:
+                if random.random() < CROSS_CHANCE and len(survivors) > 1:
+                    s1 = random.choice(survivors)
+                    survivors.remove(s1)
+                    s2 = random.choice(survivors)
+                    survivors.remove(s2)
+                    s1, s2 = s1.cross(s2)
+                    next_gen.append(s1)
+                    next_gen.append(s2)
+                else:
+                    s = random.choice(survivors)
+                    survivors.remove(s)
+                    next_gen.append(s)
 
+            # mutation
+            next_gen = [s.mutate(MUTATION_CHANCE_PER_IDX, MUTATION_RANGE) for s in next_gen]
+
+        for s in next_gen:
+            self.evaluate(s)
         next_gen.sort()
 
         fits = [f"{s.fitness:.1f}" for s in next_gen]
@@ -372,8 +413,11 @@ if __name__ == "__main__":
     clock = pygame.Clock()
     dt = 0
 
+    def generate_solution():
+        return ShotSequenceSolution.create_random(N_CUE_BALLS)
+
     problem = create_sample_problem()
-    solver = SolutionManager(problem, lambda: ShotSequenceSolution.create_random(N_SHOTS))
+    solver = SolutionManager(problem)
 
     animated_solver = None
 
@@ -389,7 +433,7 @@ if __name__ == "__main__":
                     running = False
                 elif e.key == pygame.K_r:
                     problem = create_sample_problem()
-                    solver = SolutionManager(problem, lambda: ShotSequenceSolution.create_random(N_SHOTS))
+                    solver = SolutionManager(problem)
                     animated_solver = None
 
         if animated_solver is None or animated_solver.is_done():
@@ -405,7 +449,7 @@ if __name__ == "__main__":
         text_to_render = [
             (f"Generation: {len(solver.generations)}", "snow"),
             (f"Solution: {solver.get_best_solution()}", "snow"),
-            (f"Shot: {animated_solver.shot_idx + 1}, Fitness: {animated_solver.get_fitness():.1f}", "snow")
+            (f"Fitness: {animated_solver.get_fitness():.1f}", "snow")
         ]
 
         text_y = INSET + 2
