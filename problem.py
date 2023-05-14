@@ -9,9 +9,11 @@ import math
 SIZE = (320, 240)
 INSET = 8
 
-N_CUE_BALLS = 2
-N_BALLS = 2
-N_GOALS = 1
+GRAPH_HEIGHT = 64
+
+N_CUE_BALLS = 3
+N_BALLS = 3
+N_GOALS = 2
 
 BALL_RADIUS = 8
 IMPLUSE_FACTOR = 500
@@ -19,15 +21,17 @@ FRICTION = 40
 
 MAX_SHOT_POWER = 250
 
-SOLUTION_TIME_LIMIT = 15  # seconds
+SOLUTION_TIME_LIMIT = 8  # seconds
 TIME_STEP = 1 / 60
 
 POPULATION_SIZE = 32
 
 BEST_ITEM_SELECTION_PROBABILITY = 0.1
 MUTATION_CHANCE_PER_IDX = 1 / N_CUE_BALLS
-MUTATION_RANGE = 0.3
+MUTATION_RANGE = 0.1
 CROSS_CHANCE = 0.1
+LERP_CHANCE = 0.1
+DIVERSITY_WEIGHTING = 0.333
 
 
 class Problem:
@@ -49,27 +53,41 @@ class Problem:
 class Solution:
     """Sequence of shots."""
 
-    def __init__(self, data):
+    def __init__(self, data, mode='c'):
         self.data = tuple(data)
+        self.mode = (mode * (len(self.data) // len(mode)))[:len(self.data)]
+
         self.fitness = float('inf')
 
     def create_new(self, data):
-        return Solution(data)
+        return Solution(data, mode=self.mode)
 
     def __lt__(self, other):
         return self.fitness < other.fitness
 
     def swap(self, other, weight=0.5):
-        new_data = [(d1 if random.random() < weight else d2) for d1, d2 in zip(self.data, other.data)]
+        new_data = [(d1 if random.random() < weight else d2) for d1, d2, m in zip(self.data, other.data)]
         return self.create_new(new_data)
+
+    def _lerp_val(self, v1, v2, weight, mode):
+        if mode == 'c':
+            return min(1, max(0, v1 + (v2 - v1) * weight))
+        else:
+            v2_l = (v2 - 1)
+            v2_u = (v2 + 1)
+            if abs(v1 - v2_l) < min(abs(v1 - v2), abs(v1 - v2_u)):
+                return (v1 + (v2_l - v1) * weight) % 1.0
+            elif abs(v1 - v2) < abs(v1 - v2_u):
+                return (v1 + (v2 - v1) * weight) % 1.0
+            else:
+                return (v1 + (v2_u - v1) * weight) % 1.0
 
     def lerp(self, other, weight=0.5):
-        new_data = [(d1 + weight * (d2 - d1)) for d1, d2 in zip(self.data, other.data)]
-        return self.create_new(new_data)
+        return self.create_new([self._lerp_val(d1, d2, weight, m) for d1, d2, m in zip(self.data, other.data, self.mode)])
 
-    def mutate(self, p_per_idx, mutate_range):
-        new_data = [((d + 2 * (random.random() - 0.5) * mutate_range) % 1.0
-                     if random.random() < p_per_idx else d) for d in self.data]
+    def mutate(self, p_per_idx, amt):
+        raw_vals = [(d + 2 * (random.random() - 0.5) * amt if random.random() < p_per_idx else d) for d in self.data]
+        new_data = [min(1, max(0, v)) if m == 'c' else v % 1.0 for v, m in zip(raw_vals, self.mode)]
         return self.create_new(new_data)
 
     def cross(self, other):
@@ -78,10 +96,16 @@ class Solution:
         new_data_2 = other.data[:cross_idx] + self.data[cross_idx:]
         return self.create_new(new_data_1), self.create_new(new_data_2)
 
+    def _val_dist(self, v1, v2, mode):
+        if mode == 'c':
+            return abs(v1 - v2)
+        else:
+            return min(abs(v1 - v2), abs(v1 - v2 - 1), abs(v1 - v2 + 1))
+
     def distance_to(self, other):
         tot_sum = 0
-        for d1, d2 in zip(self.data, other.data):
-            tot_sum += (d1 - d2) * (d1 - d2)
+        for d1, d2, m in zip(self.data, other.data, self.mode):
+            tot_sum += self._val_dist(d1, d2, m) ** 2
         return math.sqrt(tot_sum)
 
     def __eq__(self, other):
@@ -101,7 +125,7 @@ class Solution:
 class ShotSequenceSolution(Solution):
 
     def __init__(self, data):
-        super().__init__(data)
+        super().__init__(data, mode="wc")
 
     def create_new(self, data):
         return ShotSequenceSolution(data)
@@ -118,6 +142,10 @@ class ShotSequenceSolution(Solution):
             vec = pygame.Vector2()
             vec.from_polar((power * MAX_SHOT_POWER, angle * 360))
             return vec
+
+    def get_shots(self) -> typing.Generator[pygame.Vector2, None, None]:
+        for idx in range(self.num_shots()):
+            yield self.get_shot(idx)
 
     @classmethod
     def create_random(cls, num_shots):
@@ -260,11 +288,28 @@ class ProblemSolver:
 
 class AnimatedProblemSolver(ProblemSolver):
 
-    def __init__(self, problem: Problem, solution: ShotSequenceSolution):
+    def __init__(self, problem: Problem, solution: ShotSequenceSolution,
+                 all_solutions=[]):
         super().__init__(problem, solution)
+        self.all_solutions = all_solutions
 
     def draw(self, screen):
         screen.fill('black')
+
+        # draw all solutions in current generation
+        if not pygame.key.get_pressed()[pygame.K_SPACE]:
+            best_fitness = min(s.fitness for s in self.all_solutions)
+            worst_fitness = max(s.fitness for s in self.all_solutions)
+            best_color = pygame.Color("gray66")
+            worst_color = pygame.Color("black")
+            for idx, s in enumerate(reversed(self.all_solutions)):
+                color_pcnt = (s.fitness - best_fitness) / (worst_fitness - best_fitness) if worst_fitness != best_fitness else 0
+                color = best_color.lerp(worst_color, color_pcnt)  # if idx != len(self.all_solutions) - 1 else "gray66"
+                for shot_idx, shot in enumerate(s.get_shots()):
+                    start = self.problem.cue_ball_xys[shot_idx]
+                    end = shot / MAX_SHOT_POWER * 64 + start
+                    pygame.draw.line(screen, color, start, end)
+
         pygame.draw.rect(screen, "gray", self.problem.rect, width=1)
 
         for gxy in self.goal_xys:
@@ -320,6 +365,9 @@ class SolutionManager:
         self.problem = problem
         self.generations = []
 
+        self.best_ever = None
+        self.best_solutions = []
+
     def get_current_generation(self):
         return self.generations[-1]
 
@@ -365,7 +413,8 @@ class SolutionManager:
                     cur_gen_by_diversity.sort(key=lambda item: -sum(item.distance_to(other) for other in survivors))
                     items = {s: idx * idx for idx, s in enumerate(cur_gen_by_fitness)}
                     for idx, s in enumerate(cur_gen_by_diversity):
-                        items[s] = math.sqrt(items[s] + idx * idx)
+                        div_idx = idx * DIVERSITY_WEIGHTING
+                        items[s] = math.sqrt(items[s] + div_idx * div_idx)
                     items_by_fitdiv = list(cur_gen_by_diversity)
                     random.shuffle(items_by_fitdiv)
                     items_by_fitdiv.sort(key=lambda item: items[item])
@@ -376,12 +425,18 @@ class SolutionManager:
             # crossover
             next_gen = []
             while len(survivors) > 0:
-                if random.random() < CROSS_CHANCE and len(survivors) > 1:
+                rng = random.random()
+                if rng < CROSS_CHANCE + LERP_CHANCE and len(survivors) > 1:
                     s1 = random.choice(survivors)
                     survivors.remove(s1)
                     s2 = random.choice(survivors)
                     survivors.remove(s2)
-                    s1, s2 = s1.cross(s2)
+
+                    if rng < CROSS_CHANCE:
+                        s1, s2 = s1.cross(s2)
+                    else:
+                        s1, s2 = s1.lerp(s2, 0.333), s1.lerp(s2, 0.666)
+
                     next_gen.append(s1)
                     next_gen.append(s2)
                 else:
@@ -403,13 +458,19 @@ class SolutionManager:
 
     def step(self) -> Solution:
         self.generations.append(self.create_next_generation())
-        return self.get_best_solution()
+
+        new_best = self.get_best_solution()
+        self.best_solutions.append(new_best)
+        if self.best_ever is None or new_best.fitness < self.best_ever.fitness:
+            self.best_ever = new_best
+        return new_best
 
 
 if __name__ == "__main__":
     pygame.init()
 
-    screen = rainbowize.make_fancy_scaled_display(SIZE, 2, extra_flags=pygame.RESIZABLE)
+    screen_size = (SIZE[0], SIZE[1] + INSET + GRAPH_HEIGHT)
+    screen = rainbowize.make_fancy_scaled_display(screen_size, 2, extra_flags=pygame.RESIZABLE)
     clock = pygame.Clock()
     dt = 0
 
@@ -437,10 +498,11 @@ if __name__ == "__main__":
                     animated_solver = None
 
         if animated_solver is None or animated_solver.is_done():
-            last_best = None if animated_solver is None else animated_solver.solution.fitness
+            prev_best_ever = solver.best_ever
             next_solution = solver.step()
-            animated_solver = AnimatedProblemSolver(problem, next_solution)
-            if last_best is not None and next_solution.fitness >= last_best:
+            animated_solver = AnimatedProblemSolver(problem, next_solution,
+                                                    all_solutions=solver.get_current_generation())
+            if prev_best_ever is not None and prev_best_ever == solver.best_ever:
                 animated_solver.done = True  # skip it
 
         animated_solver.update(1 / 60)  # fixed timestep for consistency's sake
@@ -457,6 +519,30 @@ if __name__ == "__main__":
             surf = font.render(text, True, color)
             screen.blit(surf, (INSET + 2, text_y))
             text_y += surf.get_height() + 2
+
+        # draw fitness graph
+        graph_rect = pygame.Rect(INSET, screen_size[1] - INSET - GRAPH_HEIGHT,
+                                 screen_size[0] - INSET * 2, GRAPH_HEIGHT)
+        graph_inner_rect = graph_rect.inflate(-4, -4)
+
+        pygame.draw.rect(screen, "black", graph_rect)
+        pygame.draw.rect(screen, "gray", graph_rect, width=1)
+        if len(solver.best_solutions) > 1:
+            max_y = max(1, max(s.fitness for s in solver.best_solutions))
+            max_x = max(25, len(solver.best_solutions))
+            pts = []
+            best_pts = []
+            best = solver.best_solutions[0].fitness
+            for idx, s in enumerate(solver.best_solutions):
+                pt = (round(graph_inner_rect.x + graph_inner_rect.width * idx / max_x),
+                      round(graph_inner_rect.y + graph_inner_rect.height * (1 - s.fitness / max_y)))
+                if s.fitness < best:
+                    best = s.fitness
+                    best_pts.append(pt)
+                pts.append(pt)
+            pygame.draw.lines(screen, "royalblue", False, pts)
+            for pt in best_pts:
+                pygame.draw.circle(screen, "snow", pt, 3, width=1)
 
         dt = clock.tick(60) / 1000
         pygame.display.flip()
