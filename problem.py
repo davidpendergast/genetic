@@ -11,8 +11,8 @@ INSET = 8
 
 GRAPH_HEIGHT = 64
 
-N_CUE_BALLS = 3
-N_BALLS = 3
+N_CUE_BALLS = 2
+N_BALLS = 2
 N_GOALS = 2
 
 BALL_RADIUS = 8
@@ -32,6 +32,7 @@ MUTATION_RANGE = 0.1
 CROSS_CHANCE = 0.1
 LERP_CHANCE = 0.1
 DIVERSITY_WEIGHTING = 0.333
+FORCE_BEST_TO_STAY = True
 
 
 class Problem:
@@ -398,6 +399,7 @@ class SolutionManager:
     def create_next_generation(self):
         if len(self.generations) == 0:
             next_gen = [self.evaluate(self.problem.new_random_solution()) for _ in range(POPULATION_SIZE)]
+            next_gen.sort()
         else:
             cur_gen = self.get_current_generation()
             cur_gen_by_fitness = list(cur_gen)
@@ -447,9 +449,13 @@ class SolutionManager:
             # mutation
             next_gen = [s.mutate(MUTATION_CHANCE_PER_IDX, MUTATION_RANGE) for s in next_gen]
 
-        for s in next_gen:
-            self.evaluate(s)
-        next_gen.sort()
+            for s in next_gen:
+                self.evaluate(s)
+            next_gen.sort()
+
+            if FORCE_BEST_TO_STAY and cur_gen[0] not in next_gen:
+                next_gen[-1] = cur_gen[0]
+                next_gen.sort()
 
         fits = [f"{s.fitness:.1f}" for s in next_gen]
         print(f"GEN {len(self.generations) + 1}: {fits}")

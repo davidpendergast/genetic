@@ -1,0 +1,160 @@
+
+Pool Roguelike
+or... Pool of ___
+or... ___ Pool
+Drowning Pool  (let the bodies hit the floor)
+Pool of Blood
+
+Darkest Dungeon meets Super Auto Balls
+
+
+Gameplay loop:
+
+1. Choose level from branching map.
+  - Different types of levels (different enemies, different encounters, bosses, reward nodes)
+  - Levels may have optional bonus objectives, granting extra rewards.
+    - e.g. Kill X Units with a ring-out
+    - Win without falling below 1/2 HP on any units
+2. Take out enemies using tactics, and/or complete bonus objectives.
+3. Upon winning, get a set of rewards to choose from.
+  - Must be applied to units immediately or discarded (no inventory).
+4. Repeat
+
+
+Concept:
+ - Enemies and units behave like pool balls, dealing damage by hitting each other & obstacles.
+ - Many effects, buffs and debuffs can be applied which change the ways units behave.
+ - You control a team of heros, who can die (and death is relatively permanent).
+ - New heros can be found during the run.
+   - Are there classes or affinities for heros?
+   - I think no, it's all buffs / debuffs
+ - Are there different attack types? 
+   - I think also no, each unit kind of does one attack with effects from buffs
+  
+ 
+Units have basic stats, some of which depend on the unit's speed:
+ - DMG/HP/SPEED
+   - (DMG is halfed of quartered at mid & low speed, respectively)
+  - SPEED determines shot order, not movement speed
+ - POWER (controls actual shot speed, which affects base damage)  
+ - HEAL % Effectiveness
+ - RADIUS
+ - POISON %
+ - DEBUFF RESIST
+ - STATUS RESIST
+ - MISCUE % (chance to perform a "miscue shot") 
+ - ACCURACY (how badly miscues affect the shot)  ^ potentially combinable 
+ - VISION (length of shot guidelines)
+ - CRIT CHANCE
+ - CRIT MULTI
+ - CRIT RESIST
+ - THORNS  (deal damage when touched)
+  
+  
+AI:
+  - enemy units choose their shots using Ghast's Special AlgorithmTM
+    - (genetic algorithm)
+    - different fitness functions for different units
+    - needs to be FAST to compute (like instant)
+    - fixed number of generations / population size per shot
+      - maybe smarter enemies will get more search juice
+      - should not be better on faster computers (lol)
+      
+      
+Global Effect Examples:
+ - Angel Wings: Friendly unit is revived after falling into abyss (removed on use)
+ - 
+ 
+Status effects:
+ - Poison: dmg at start of turn
+ - Webbed: reduced speed, reduced power, reduced accuracy
+ - Blindness: reduced accuracy
+ - Cross eyed: two shot arrows, will choose 1 randomly
+ - Rooted: cannot move or be moved
+ - Tactician: If first shot doesn't hit a unit, may shoot again.
+ 
+Buffs:
+ - +Stats for X turns
+
+Debuffs:
+ - -Stats of X turns
+ 
+Ground Effects:
+ - Give statuses or stat modifications to units in an area
+ 
+Unit Effect Examples:
+ - Healer: Heals friendly units by X% on touch, -X% damage
+ - Waller: +25% damage after ricochets, -10% non-ricochet damage.
+ - Direct Shooter: +10% damage on direct shots, -25% damage after ricochets
+ - Summoner: Start of battle: Spawns X 2/4/1 Skeletons 
+ - Poisoner: X% chance to apply Y POIS, for Z turns on touch.
+ - Toxic: Can apply poison to the same unit multiple times in a single shot. Can apply poison to friendly units.
+ - Unsteady: +X% DMG, -Y% Accuracy
+ - Spiky: +X THORNS 
+ - Curer: Removes POIS from first friendly unit hit
+ - Reactor: Activates on-hit effects when hit instead
+ 
+Summon on Kill
+Armor on Kill
+ 
+Triggers:
+ ___ on Kill
+ ___ on Hit
+ ___ when Hit
+ ___ on crit
+ ___ on miscue
+ ___ on ricochet
+ ___ on X resist
+ ___ on STATUS recieved
+ ___ on STATUS dealt
+ 
+Time:
+ (Immediate)
+ ___ unit next shot
+ ___ for X shots
+ ___ until end of battle
+ ___ until end of shot
+ 
+Triggerable Actions:
+ - Recieve Status/Buff/Debuff
+ - Apply Status/Buff/Debuff
+ - Become Intangible
+ 
+
+Builds:
+ - Offensive Paradigms:
+   - POWER build that focuses on ring-outs
+   - DMG build that focuses on direct damage
+   - STATUS build that kills with status effects
+   - SUMMON build that uses disposable units to kill enemies
+ 
+ - Defensive Paradigms:
+   - Control build that weakens & debuffs enemies
+   - Armor/healing build that resists direct damage
+   - Tactical build that uses movement and positioning to avoid damage
+   - Status build that uses self-buffs to resist damage
+  
+ - Utility Paradigms:
+   - Loot finding
+   - Start of battle effects/debuffs on enemies
+   - Scouting/map traversal buffs
+   - Stuff that modifies level challenges
+ 
+ 
+Thoughts:
+ - Ok, so clearly there's a ton of potential for complexity here. 
+ - Stats should aim to interact with physicsy stuff, not just raw numbers if possible
+ - Direct Damage is boring if it's too effective.
+   - Maybe some enemies should be unkillable via direct damage alone?
+     - i.e. you have to ring-out them? Or even all enemies could work this way.
+     - or have something like armor be the counter to direct damage
+ - How to make player units resist unfair deaths?
+   - DD's 0-hp last stand thing is pretty cool but I don't really wanna copy that.
+   - Maybe units shouldn't perma-die individually in levels 
+     - (just become inactive for the rest of the battle instead).
+     - this also opens the door to self-sacrificing units and positive on-death effects
+     - and revive mechanics?
+
+ 
+ 
+ 
