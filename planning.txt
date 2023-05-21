@@ -154,6 +154,38 @@ Thoughts:
      - (just become inactive for the rest of the battle instead).
      - this also opens the door to self-sacrificing units and positive on-death effects
      - and revive mechanics?
+     
+ - Also, this concept has definitely been done before.
+   - worth checking out those other games? 
+     - (so we can ensure we're doing something different)?
+     - nah, you're just gonna demotivate yourself 
+     
+ - Other big question - should we use Box2D or a custom physics engine?
+   - it's just 2d circles and polygon collsions, not too difficult to program.
+   - not sure how stable Box2D is
+      - need stability for AI solution-finding
+        - somewhat imperfect stability is probably ok though.
+          - would only cause issues if it finds an extremely precise
+            best solution, which seems rare.
+   - quickness of setup & simulation is important though.
+     - probably box2d would be faster? at least for simulation.
+ 
+ 
+Visuals:
+ - 2D sprites standing on spherical disks, I'm thinking.
+ - Top down, 45 degree-ish view
+   - (like skeletris)
+ - minimal animations
+ - yeah basically just skeletris style graphics
+ - as for the theme... 
+ 
+ 
+Prototype: "Knock-Off"
+  - fixed level, random spawns
+  - play against ai
+  
+  
+ 
 
  
  

@@ -1,4 +1,9 @@
 import typing
+
+import sys
+if sys.version_info < (3, 11):
+    typing.Self = typing.Any
+
 from functools import total_ordering
 
 import pygame
@@ -36,77 +41,138 @@ FORCE_BEST_TO_STAY = True
 
 
 class Problem:
+
+    def __init__(self):
+        self.cached_solutions = {}
+
+    def new_random_solution(self) -> 'Solution':
+        raise NotImplementedError()
+
+
+class CueBallProblem(Problem):
     """Configuration of balls & level geometry."""
 
-    def __init__(self, cue_ball_xys, ball_xys, goal_xys, rect, solution_producer):
+    def __init__(self, cue_ball_xys, ball_xys, goal_xys, rect):
+        super().__init__()
         self.cue_ball_xys = cue_ball_xys
         self.ball_xys = ball_xys
         self.goal_xys = goal_xys
         self.rect = rect
 
-        self.solution_producer = solution_producer
-        self.cached_solutions = {}
-
     def new_random_solution(self):
-        return self.solution_producer()
+        return ShotSequenceSolution(size=len(self.cue_ball_xys) * 2)
+
+
+class GeneSpec:
+
+    def __init__(self, wrapmode='c', upper=1, lower=0, integer=False):
+        if wrapmode != 'c' and wrapmode != 'w':
+            raise ValueError("wrapmode must be 'c' (clamp) or 'w' (wrap)")
+        self.wrapmode = wrapmode
+        if lower > upper:
+            raise ValueError(f"lower must be less than upper: {lower} > {upper}")
+        self.integer = integer
+        self.upper = int(upper) if integer else upper
+        self.lower = int(lower) if integer else lower
+
+    def new_value(self) -> float:
+        return self.lower + (self.upper - self.lower) * random.random()
+
+    def choose(self, v1, v2, weight=0.5):
+        return v1 if random.random() < weight else v2
+
+    def lerp(self, v1, v2, t=0.5) -> float:
+        v2 = self._unwrap(v1, v2) if self.wrapmode == 'w' else v2
+        return self._normalize(v1 + t * (v2 - v1))
+
+    def add(self, v, amt) -> float:
+        return self._normalize(v + amt)
+
+    def mutate(self, v, max_pct) -> float:
+        max_change = max_pct * (self.upper - self.lower)
+        return self.add(v, 2 * (random.random() - 0.5) * max_change)
+
+    def distance(self, v1, v2) -> float:
+        if self.wrapmode == 'c':
+            return abs(v1 - v2)
+        else:
+            return abs(v1 - self._unwrap(v1, v2))
+
+    def _clamp(self, val) -> float:
+        return max(self.lower, min(self.upper, val))
+
+    def _wrap(self, val) -> float:
+        return self.lower + (val - self.lower) % self.upper
+
+    def _round(self, val) -> float:
+        if val == int(val):
+            return int(val)
+        else:
+            upper = math.ceil(val)
+            return int(math.floor(val) if random.random() < (upper - val) else upper)
+
+    def _normalize(self, val) -> float:
+        if self.integer:
+            val = self._round(val)
+        if self.wrapmode == 'c':
+            val = self._clamp(val)
+        else:
+            val = self._wrap(val)
+        return val
+
+    def _unwrap(self, v1, v2) -> float:
+        unwrapped_v2 = v2
+        if abs(v1 - (v2 - (self.upper - self.lower))) < abs(v1 - unwrapped_v2):
+            unwrapped_v2 = v2 - (self.upper - self.lower)
+        elif abs(v1 - (v2 + (self.upper - self.lower))) < abs(v1 - unwrapped_v2):
+            unwrapped_v2 = v2 + (self.upper - self.lower)
+        return unwrapped_v2
+
 
 @total_ordering
 class Solution:
     """Sequence of shots."""
 
-    def __init__(self, data, mode='c'):
-        self.data = tuple(data)
-        self.mode = (mode * (len(self.data) // len(mode)))[:len(self.data)]
+    def __init__(self, size: typing.Optional[int] = None,
+                 data: typing.Optional[typing.Tuple[float]] = None,
+                 specs: typing.Optional[typing.Sequence[GeneSpec]] = None):
 
+        if data is not None and not isinstance(data, tuple):
+            raise ValueError("data must be tuple")
+
+        self.specs: typing.Tuple[GeneSpec] = specs if specs is not None else tuple(GeneSpec() for _ in range(size))
+        self.data: typing.Tuple[float] = data if data is not None else tuple(spec.new_value() for spec in self.specs)
         self.fitness = float('inf')
 
-    def create_new(self, data):
-        return Solution(data, mode=self.mode)
+    def create_new(self, data: typing.Tuple[float]) -> typing.Self:
+        return Solution(data=data, specs=self.specs)
 
-    def __lt__(self, other):
+    def __lt__(self, other: typing.Self):
         return self.fitness < other.fitness
 
-    def swap(self, other, weight=0.5):
-        new_data = [(d1 if random.random() < weight else d2) for d1, d2, m in zip(self.data, other.data)]
+    def swap(self, other: typing.Self, weight=0.5) -> typing.Self:
+        new_data = tuple((d1 if random.random() < weight else d2) for d1, d2, m in zip(self.data, other.data))
         return self.create_new(new_data)
 
-    def _lerp_val(self, v1, v2, weight, mode):
-        if mode == 'c':
-            return min(1, max(0, v1 + (v2 - v1) * weight))
-        else:
-            v2_l = (v2 - 1)
-            v2_u = (v2 + 1)
-            if abs(v1 - v2_l) < min(abs(v1 - v2), abs(v1 - v2_u)):
-                return (v1 + (v2_l - v1) * weight) % 1.0
-            elif abs(v1 - v2) < abs(v1 - v2_u):
-                return (v1 + (v2 - v1) * weight) % 1.0
-            else:
-                return (v1 + (v2_u - v1) * weight) % 1.0
-
-    def lerp(self, other, weight=0.5):
-        return self.create_new([self._lerp_val(d1, d2, weight, m) for d1, d2, m in zip(self.data, other.data, self.mode)])
-
-    def mutate(self, p_per_idx, amt):
-        raw_vals = [(d + 2 * (random.random() - 0.5) * amt if random.random() < p_per_idx else d) for d in self.data]
-        new_data = [min(1, max(0, v)) if m == 'c' else v % 1.0 for v, m in zip(raw_vals, self.mode)]
+    def lerp(self, other: typing.Self, t=0.5) -> typing.Self:
+        new_data = tuple(spec.lerp(d1, d2, t=t) for d1, d2, spec in zip(self.data, other.data, self.specs))
         return self.create_new(new_data)
 
-    def cross(self, other):
+    def mutate(self, p_per_idx, max_pct) -> typing.Self:
+        new_data = tuple((spec.mutate(v, max_pct) if random.random() < p_per_idx else v)
+                         for v, spec in zip(self.data, self.specs))
+        return self.create_new(new_data)
+
+    def cross(self, other: typing.Self) -> typing.Tuple[typing.Self, typing.Self]:
         cross_idx = random.randint(0, len(self.data) - 1)
         new_data_1 = self.data[:cross_idx] + other.data[cross_idx:]
         new_data_2 = other.data[:cross_idx] + self.data[cross_idx:]
         return self.create_new(new_data_1), self.create_new(new_data_2)
 
-    def _val_dist(self, v1, v2, mode):
-        if mode == 'c':
-            return abs(v1 - v2)
-        else:
-            return min(abs(v1 - v2), abs(v1 - v2 - 1), abs(v1 - v2 + 1))
-
-    def distance_to(self, other):
+    def distance_to(self, other: typing.Self) -> float:
         tot_sum = 0
-        for d1, d2, m in zip(self.data, other.data, self.mode):
-            tot_sum += self._val_dist(d1, d2, m) ** 2
+        for d1, d2, spec in zip(self.data, other.data, self.specs):
+            tot_sum += spec.distance(d1, d2) ** 2
         return math.sqrt(tot_sum)
 
     def __eq__(self, other):
@@ -119,17 +185,15 @@ class Solution:
         datas = ", ".join(tuple(f'{d:.3f}' for d in self.data))
         return f"S({datas}) = {self.fitness:.1f}"
 
-    @classmethod
-    def create_random_data(cls, size):
-        return [random.random() for _ in range(size)]
-
 class ShotSequenceSolution(Solution):
 
-    def __init__(self, data):
-        super().__init__(data, mode="wc")
+    def __init__(self, size=None, data=None, specs=None):
+        super().__init__(size=size,
+                         data=data,
+                         specs=specs if specs is not None else [GeneSpec('c'), GeneSpec('w')] * ((size or len(data)) // 2))
 
     def create_new(self, data):
-        return ShotSequenceSolution(data)
+        return ShotSequenceSolution(data=data, specs=self.specs)
 
     def num_shots(self):
         return len(self.data) // 2
@@ -147,11 +211,6 @@ class ShotSequenceSolution(Solution):
     def get_shots(self) -> typing.Generator[pygame.Vector2, None, None]:
         for idx in range(self.num_shots()):
             yield self.get_shot(idx)
-
-    @classmethod
-    def create_random(cls, num_shots):
-        data = Solution.create_random_data(num_shots * 2)
-        return ShotSequenceSolution(data)
 
 
 BALL_UID_COUNTER = 0
@@ -197,9 +256,32 @@ class Ball:
 
 class ProblemSolver:
 
-    def __init__(self, problem: Problem, solution: ShotSequenceSolution):
+    def __init__(self, problem: Problem, solution: Solution):
         self.problem = problem
         self.solution = solution
+
+    def step(self, dt):
+        raise NotImplementedError()
+
+    def steps(self, dt, n):
+        while not self.is_done() and n > 0:
+            self.step(dt)
+            n -= 1
+
+    def is_done(self):
+        raise NotImplementedError
+
+    def get_fitness(self):
+        raise NotImplementedError()
+
+    @classmethod
+    def create(cls, problem: Problem, solution: Solution) -> typing.Self:
+        raise NotImplementedError()
+
+class CueBallProblemSolver(ProblemSolver):
+
+    def __init__(self, problem: CueBallProblem, solution: ShotSequenceSolution):
+        super().__init__(problem, solution)
         self.t_limit = SOLUTION_TIME_LIMIT
 
         # actual state of the simulation
@@ -210,7 +292,11 @@ class ProblemSolver:
         self.balls = [Ball(bxy, (0, 0)) for bxy in problem.ball_xys]
         self.cue_balls = [Ball(cxy, (0, 0), color="snow", is_cue=True) for cxy in problem.cue_ball_xys]
 
-    def update(self, dt):
+    @classmethod
+    def create(cls, problem: CueBallProblem, solution: Solution) -> typing.Self:
+        return CueBallProblemSolver(problem, solution)
+
+    def step(self, dt):
         self.t += dt
 
         if self.t > self.t_limit:
@@ -287,10 +373,10 @@ class ProblemSolver:
         return total
 
 
-class AnimatedProblemSolver(ProblemSolver):
+class AnimatedProblemSolver(CueBallProblemSolver):
 
-    def __init__(self, problem: Problem, solution: ShotSequenceSolution,
-                 all_solutions=[]):
+    def __init__(self, problem: CueBallProblem, solution: ShotSequenceSolution,
+                 all_solutions=()):
         super().__init__(problem, solution)
         self.all_solutions = all_solutions
 
@@ -356,35 +442,49 @@ def create_sample_problem() -> Problem:
     balls = balls[N_CUE_BALLS:]
     goals = [rand_point_in_rect(spawn_rect) for _ in range(N_GOALS)]
 
-    return Problem(cue_balls, balls, goals, playing_rect,
-                   lambda: ShotSequenceSolution.create_random(N_CUE_BALLS))
+    return CueBallProblem(cue_balls, balls, goals, playing_rect)
 
 
 class SolutionManager:
 
-    def __init__(self, problem):
+    def __init__(self, problem: Problem, proto_solution: Solution, solver_cls: typing.Type[ProblemSolver], max_attempts_per_solution=1):
         self.problem = problem
+        self.proto_solution = proto_solution
+        self.solver_cls = solver_cls
+
         self.generations = []
 
         self.best_ever = None
         self.best_solutions = []
 
+        self.max_attempts_per_solution = max_attempts_per_solution
+        self.cached_solutions = {}  # Solution -> list of fitnesses
+
     def get_current_generation(self):
         return self.generations[-1]
 
-    def get_best_solution(self):
-        return self.get_current_generation()[0]
+    def get_best_solution(self, ever=False):
+        if ever and self.best_ever is not None:
+            return self.best_ever
+        else:
+            return self.get_current_generation()[0]
 
     def evaluate(self, solution) -> Solution:
-        if solution in self.problem.cached_solutions:
-            solution.fitness = self.problem.cached_solutions[solution]
-        else:
+        if solution not in self.cached_solutions or len(self.cached_solutions[solution]) < self.max_attempts_per_solution:
             t = 0
-            solver = ProblemSolver(self.problem, solution)
+            solver = self.solver_cls.create(self.problem, solution)
             while t < SOLUTION_TIME_LIMIT and not solver.is_done():
-                solver.update(TIME_STEP)
+                solver.step(TIME_STEP)
                 t += TIME_STEP
             solution.fitness = solver.get_fitness()
+
+            if solution not in self.cached_solutions:
+                self.cached_solutions[solution] = [solution.fitness]
+            else:
+                self.cached_solutions[solution].append(solution.fitness)
+        else:
+            solution.fitness = sum(self.cached_solutions[solution]) / len(self.cached_solutions[solution])
+
         return solution
 
     def do_rank_selection(self, items, p=BEST_ITEM_SELECTION_PROBABILITY):
@@ -484,7 +584,7 @@ if __name__ == "__main__":
         return ShotSequenceSolution.create_random(N_CUE_BALLS)
 
     problem = create_sample_problem()
-    solver = SolutionManager(problem)
+    solver = SolutionManager(problem, ShotSequenceSolution(size=N_CUE_BALLS * 2), CueBallProblemSolver)
 
     animated_solver = None
 
@@ -511,7 +611,7 @@ if __name__ == "__main__":
             if prev_best_ever is not None and prev_best_ever == solver.best_ever:
                 animated_solver.done = True  # skip it
 
-        animated_solver.update(1 / 60)  # fixed timestep for consistency's sake
+        animated_solver.step(1 / 60)  # fixed timestep for consistency's sake
         animated_solver.draw(screen)
 
         text_to_render = [
