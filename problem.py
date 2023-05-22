@@ -19,7 +19,7 @@ INSET = 8
 GRAPH_HEIGHT = 64
 
 N_CUE_BALLS = 2
-N_BALLS = 2
+N_BALLS = 5
 N_GOALS = 2
 
 BALL_RADIUS = 8
@@ -27,19 +27,6 @@ IMPLUSE_FACTOR = 500
 FRICTION = 40
 
 MAX_SHOT_POWER = 250
-
-# SOLUTION_TIME_LIMIT = 8  # seconds
-# TIME_STEP = 1 / 60
-#
-# POPULATION_SIZE = 32
-#
-# BEST_ITEM_SELECTION_PROBABILITY = 0.1
-# MUTATION_CHANCE_PER_IDX = 1 / N_CUE_BALLS
-# MUTATION_RANGE = 0.1
-# CROSS_CHANCE = 0.1
-# LERP_CHANCE = 0.1
-# DIVERSITY_WEIGHTING = 0.333
-# FORCE_BEST_TO_STAY = True
 
 
 class CueBallProblem(Problem):
@@ -286,29 +273,130 @@ def create_sample_problem() -> Problem:
 
 def create_solvers(problem) -> typing.Sequence[GeneticProblemSolver]:
     base_settings = {
-        'population': 32,
+        'population': 16,
         'time_limit_secs': 8,
         'time_step_secs': 1 / 60,
+        'rank_selection_pratio': 1.1,
+        'force_best_to_stay_chance': 1.0,
+        'rank_selection_diversity_weighting': 0.333
     }
     proto_solution = CueBallSolution(size=2 * len(problem.cue_ball_xys))
     initial_solutions = [proto_solution.create_new(None) for _ in range(base_settings['population'])]
     return [
+        # GeneticProblemSolver(
+        #     problem,
+        #     proto_solution,
+        #     CueBallSolutionEvaluator,
+        #     settings=dict(base_settings, **{'force_best_to_stay_chance': 0}),
+        #     userdata={'name': "Normal", 'color': 'royalblue'},
+        #     first_generation=initial_solutions
+        # ),
         GeneticProblemSolver(
             problem,
             proto_solution,
             CueBallSolutionEvaluator,
-            settings=dict(base_settings, **{'force_best_to_stay_chance': 0}),
-            userdata={'name': "Normal", 'color': 'royalblue'},
+            settings=dict(base_settings, **{
+                'force_best_to_stay_chance': 1.0,
+                'rank_selection_diversity_weighting': 0.333,
+                'rank_selection_pratio': 1.05
+            }),
+            userdata={'name': "33% Div, P=5%", 'color': 'green'},
             first_generation=initial_solutions
         ),
         GeneticProblemSolver(
             problem,
             proto_solution,
             CueBallSolutionEvaluator,
-            settings=dict(base_settings, **{'force_best_to_stay_chance': 1.0}),
-            userdata={'name': "Keep Best", 'color': 'yellow'},
+            settings=dict(base_settings, **{
+                'force_best_to_stay_chance': 1.0,
+                'rank_selection_diversity_weighting': 0.333,
+                'rank_selection_pratio': 1.15,
+            }),
+            userdata={'name': "33% Div, P=15%", 'color': 'royalblue'},
             first_generation=initial_solutions
         ),
+        GeneticProblemSolver(
+            problem,
+            proto_solution,
+            CueBallSolutionEvaluator,
+            settings=dict(base_settings, **{
+                'force_best_to_stay_chance': 1.0,
+                'rank_selection_diversity_weighting': 0.333,
+                'rank_selection_pratio': 1.25,
+            }),
+            userdata={'name': "33% Div, P=25%", 'color': 'red'},
+            first_generation=initial_solutions
+        ),
+        GeneticProblemSolver(
+            problem,
+            proto_solution,
+            CueBallSolutionEvaluator,
+            settings=dict(base_settings, **{
+                'force_best_to_stay_chance': 1.0,
+                'rank_selection_diversity_weighting': 0.333,
+                'rank_selection_pratio': 1.333,
+            }),
+            userdata={'name': "33% Div, P=33%", 'color': 'purple'},
+            first_generation=initial_solutions
+        ),
+        GeneticProblemSolver(
+            problem,
+            proto_solution,
+            CueBallSolutionEvaluator,
+            settings=dict(base_settings, **{
+                'force_best_to_stay_chance': 1.0,
+                'rank_selection_diversity_weighting': 0.333,
+                'rank_selection_pratio': 1.4,
+            }),
+            userdata={'name': "33% Div, P=40%", 'color': 'cyan'},
+            first_generation=initial_solutions
+        ),
+        GeneticProblemSolver(
+            problem,
+            proto_solution,
+            CueBallSolutionEvaluator,
+            settings=dict(base_settings, **{
+                'force_best_to_stay_chance': 1.0,
+                'rank_selection_diversity_weighting': 0.333,
+                'rank_selection_pratio': 1.50,
+            }),
+            userdata={'name': "33% Div, P=50%", 'color': 'orange'},
+            first_generation=initial_solutions
+        )
+        # GeneticProblemSolver(
+        #     problem,
+        #     proto_solution,
+        #     CueBallSolutionEvaluator,
+        #     settings=dict(base_settings, **{
+        #         'force_best_to_stay_chance': 1.0,
+        #         'rank_selection_diversity_weighting': 0.666
+        #     }),
+        #     userdata={'name': "66% Diversity", 'color': 'yellow'},
+        #     first_generation=initial_solutions
+        # ),
+        # GeneticProblemSolver(
+        #     problem,
+        #     proto_solution,
+        #     CueBallSolutionEvaluator,
+        #     settings=dict(base_settings, **{
+        #         'force_best_to_stay_chance': 1.0,
+        #         'rank_selection_diversity_weighting': 1.0
+        #     }),
+        #     userdata={'name': "100% Diverisity", 'color': 'red'},
+        #     first_generation=initial_solutions
+        # ),
+        # GeneticProblemSolver(
+        #     problem,
+        #     proto_solution,
+        #     CueBallSolutionEvaluator,
+        #     settings=dict(base_settings, **{
+        #         'force_best_to_stay_chance': 0,
+        #         'avg_mutations_per_offspring': 1000,
+        #         'mutation_max_pcnt': 1,
+        #     }),
+        #     userdata={'name': "Random", 'color': 'orange'},
+        #     first_generation=initial_solutions
+        #),
     ]
 
 
@@ -371,9 +459,17 @@ if __name__ == "__main__":
             text_y += surf.get_height() + 2
 
         # draw fitness graph
-        graph_rect = pygame.Rect(INSET, screen_size[1] - INSET - GRAPH_HEIGHT,
-                                 screen_size[0] - INSET * 2, GRAPH_HEIGHT)
+        sorted_solvers = sorted(solvers, key=lambda s: -s.best_ever.fitness)
+        solver_labels = [font.render(solver.userdata['name'], True, solver.userdata['color']) for solver in sorted_solvers]
+        offs = max(label.get_width() for label in solver_labels)
+
+        graph_rect = pygame.Rect(INSET * 2 + offs, screen_size[1] - INSET - GRAPH_HEIGHT,
+                                 screen_size[0] - INSET * 2 - (offs + INSET), GRAPH_HEIGHT)
         graph_inner_rect = graph_rect.inflate(-4, -4)
+
+        # draw graph legend
+        for idx, label in enumerate(solver_labels):
+            screen.blit(label, (graph_rect[0] - label.get_width() - INSET, graph_rect[1] + idx * label.get_height()))
 
         pygame.draw.rect(screen, "black", graph_rect)
         pygame.draw.rect(screen, "gray", graph_rect, width=1)
@@ -400,7 +496,7 @@ if __name__ == "__main__":
                 raw_pts.append((pygame.Color(color).lerp('white', 0.666), overall_best_pts))
 
         max_y = 1
-        max_x = 25
+        max_x = 5
         for _, xy_list in (raw_lines + raw_pts):
             for xy in xy_list:
                 max_x = max(max_x, xy[0])

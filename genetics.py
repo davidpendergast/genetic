@@ -169,7 +169,7 @@ class GeneticProblemSolver:
         'population': 16,
         'time_limit_secs': float('inf'),
         'time_step_secs': 0.1,
-        'rank_selection_pmax': 0.1,
+        'rank_selection_pratio': 1.1,
         'rank_selection_diversity_weighting': 0.333,
         'cross_chance': 0.1,
         'lerp_chance': 0.1,
@@ -232,15 +232,16 @@ class GeneticProblemSolver:
 
         return solution
 
-    def do_rank_selection(self, items):
-        rng = random.random()
-        p = self.settings['rank_selection_pmax']
-        for it in items:  # TODO just solve it
-            if rng < p:
-                return it
-            else:
-                rng *= (1 - p)
-        return items[-1]
+    # def do_rank_selection(self, items, weights):
+    #     rng = random.random()
+    #     return random.choices(items, weights, k=1)[0]
+    #     p = self.settings['rank_selection_pmax']
+    #     for it in items:  # TODO just solve it
+    #         if rng < p:
+    #             return it
+    #         else:
+    #             rng *= (1 - p)
+    #     return items[-1]
 
     def create_next_generation(self):
         if len(self.generations) == 0:
@@ -256,11 +257,13 @@ class GeneticProblemSolver:
             cur_gen_by_fitness = list(cur_gen)
             cur_gen_by_fitness.sort()
 
+            rank_selection_weights = list(reversed([self.settings['rank_selection_pratio'] ** x for x in range(len(cur_gen))]))
+
             # survival
             survivors = []
             while len(survivors) < self.settings['population']:
                 if len(survivors) == 0:
-                    next_item = self.do_rank_selection(cur_gen_by_fitness)
+                    next_item = random.choices(cur_gen_by_fitness, weights=rank_selection_weights, k=1)[0]
                 else:
                     cur_gen_by_diversity = list(cur_gen_by_fitness)
                     cur_gen_by_diversity.sort(key=lambda item: -sum(item.distance_to(other) for other in survivors))
@@ -272,7 +275,7 @@ class GeneticProblemSolver:
                     random.shuffle(items_by_fitdiv)
                     items_by_fitdiv.sort(key=lambda item: items[item])
 
-                    next_item = self.do_rank_selection(items_by_fitdiv)
+                    next_item = random.choices(items_by_fitdiv, weights=rank_selection_weights, k=1)[0]
                 survivors.append(next_item)
 
             # crossover
