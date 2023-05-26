@@ -1,5 +1,7 @@
 .git/*
 .idea/*
+*/__pycache__/*
 __pycache__/*
 test.py
 speedtest.py
+*.mp4
