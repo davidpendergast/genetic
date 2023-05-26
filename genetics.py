@@ -1,4 +1,5 @@
 import typing
+import time
 
 import sys
 if sys.version_info < (3, 11):
@@ -13,7 +14,7 @@ import math
 class Problem:
 
     def __init__(self):
-        self.cached_solutions = {}
+        pass
 
 
 class GeneSpec:
@@ -104,7 +105,7 @@ class Solution:
         return self.fitness < other.fitness
 
     def swap(self, other: typing.Self, weight=0.5) -> typing.Self:
-        new_data = tuple((d1 if random.random() < weight else d2) for d1, d2, m in zip(self.data, other.data))
+        new_data = tuple((d1 if random.random() < weight else d2) for d1, d2 in zip(self.data, other.data))
         return self.create_new(new_data)
 
     def lerp(self, other: typing.Self, t=0.5) -> typing.Self:
@@ -163,6 +164,7 @@ class SolutionEvaluator:
     def create(cls, problem: Problem, solution: Solution) -> typing.Self:
         raise NotImplementedError()
 
+
 class GeneticProblemSolver:
 
     DEFAULT_SETTINGS = {
@@ -190,7 +192,15 @@ class GeneticProblemSolver:
         self.proto_solution = proto_solution
         self.evaluator_cls = evaluator_cls
 
-        self.settings = dict(GeneticProblemSolver.DEFAULT_SETTINGS, **(settings or {}))
+        self.settings = dict(GeneticProblemSolver.DEFAULT_SETTINGS)
+
+        if settings is not None:
+            for keyword in settings:
+                if keyword in self.settings:
+                    self.settings[keyword] = settings[keyword]
+                else:
+                    raise ValueError(f"unrecognized setting: {keyword}")
+
         self._first_gen_override = first_generation
 
         self.generations = []
@@ -201,6 +211,7 @@ class GeneticProblemSolver:
 
         self.cached_solutions = {}  # Solution -> list of fitnesses
         self.userdata = userdata or {}
+        self.elapsed_time = 0
 
     def get_current_generation(self):
         return self.generations[-1]
@@ -211,11 +222,22 @@ class GeneticProblemSolver:
         else:
             return self.get_current_generation()[0]
 
+    def _get_setting(self, keyword):
+        val = self.settings[keyword]
+        if isinstance(val, tuple):
+            start, end, duration = val
+            if len(self.generations) > duration:
+                return end
+            else:
+                return start + len(self.generations) / duration * (end - start)
+        else:
+            return val
+
     def evaluate(self, solution) -> Solution:
-        if solution not in self.cached_solutions or len(self.cached_solutions[solution]) < self.settings['max_attempts_per_solution']:
+        if solution not in self.cached_solutions or len(self.cached_solutions[solution]) < self._get_setting('max_attempts_per_solution'):
             if solution.fitness == float('inf'):
-                time_limit = self.settings['time_limit_secs']
-                dt = self.settings['time_step_secs']
+                time_limit = self._get_setting('time_limit_secs')
+                dt = self._get_setting('time_step_secs')
                 t = 0
                 evaluator = self.evaluator_cls.create(self.problem, solution)
                 while t < time_limit and not evaluator.is_done():
@@ -232,21 +254,11 @@ class GeneticProblemSolver:
 
         return solution
 
-    # def do_rank_selection(self, items, weights):
-    #     rng = random.random()
-    #     return random.choices(items, weights, k=1)[0]
-    #     p = self.settings['rank_selection_pmax']
-    #     for it in items:  # TODO just solve it
-    #         if rng < p:
-    #             return it
-    #         else:
-    #             rng *= (1 - p)
-    #     return items[-1]
-
     def create_next_generation(self):
+        start_time = time.time()
         if len(self.generations) == 0:
             next_gen = []
-            for i in range(self.settings['population']):
+            for i in range(self._get_setting('population')):
                 if i < len(self._first_gen_override):
                     next_gen.append(self.evaluate(self._first_gen_override[i]))
                 else:
@@ -257,11 +269,11 @@ class GeneticProblemSolver:
             cur_gen_by_fitness = list(cur_gen)
             cur_gen_by_fitness.sort()
 
-            rank_selection_weights = list(reversed([self.settings['rank_selection_pratio'] ** x for x in range(len(cur_gen))]))
+            rank_selection_weights = list(reversed([self._get_setting('rank_selection_pratio') ** x for x in range(len(cur_gen))]))
 
             # survival
             survivors = []
-            while len(survivors) < self.settings['population']:
+            while len(survivors) < self._get_setting('population'):
                 if len(survivors) == 0:
                     next_item = random.choices(cur_gen_by_fitness, weights=rank_selection_weights, k=1)[0]
                 else:
@@ -269,7 +281,7 @@ class GeneticProblemSolver:
                     cur_gen_by_diversity.sort(key=lambda item: -sum(item.distance_to(other) for other in survivors))
                     items = {s: idx * idx for idx, s in enumerate(cur_gen_by_fitness)}
                     for idx, s in enumerate(cur_gen_by_diversity):
-                        div_idx = idx * self.settings['rank_selection_diversity_weighting']
+                        div_idx = idx * self._get_setting('rank_selection_diversity_weighting')
                         items[s] = math.sqrt(items[s] + div_idx * div_idx)
                     items_by_fitdiv = list(cur_gen_by_diversity)
                     random.shuffle(items_by_fitdiv)
@@ -282,16 +294,17 @@ class GeneticProblemSolver:
             next_gen = []
             while len(survivors) > 0:
                 rng = random.random()
-                if rng < self.settings['cross_chance'] + self.settings['lerp_chance'] and len(survivors) > 1:
+                if rng < self._get_setting('cross_chance') + self._get_setting('lerp_chance') and len(survivors) > 1:
                     s1 = random.choice(survivors)
                     survivors.remove(s1)
                     s2 = random.choice(survivors)
                     survivors.remove(s2)
 
-                    if rng < self.settings['cross_chance']:
+                    if rng < self._get_setting('cross_chance'):
                         s1, s2 = s1.cross(s2)
                     else:
-                        s1, s2 = s1.lerp(s2, 0.333), s1.lerp(s2, 0.666)
+                        r = random.random()
+                        s1, s2 = s1.lerp(s2, r), s1.lerp(s2, 1 - r)
 
                     next_gen.append(s1)
                     next_gen.append(s2)
@@ -301,19 +314,21 @@ class GeneticProblemSolver:
                     next_gen.append(s)
 
             # mutation
-            mutation_chance_per_idx = self.settings['avg_mutations_per_offspring'] / len(self.proto_solution.data)
-            next_gen = [s.mutate(mutation_chance_per_idx, self.settings['mutation_max_pcnt']) for s in next_gen]
+            mutation_chance_per_idx = self._get_setting('avg_mutations_per_offspring') / len(self.proto_solution.data)
+            next_gen = [s.mutate(mutation_chance_per_idx, self._get_setting('mutation_max_pcnt')) for s in next_gen]
 
             for s in next_gen:
                 self.evaluate(s)
             next_gen.sort()
 
-            if random.random() < self.settings['force_best_to_stay_chance'] and cur_gen[0] not in next_gen:
+            if random.random() < self._get_setting('force_best_to_stay_chance') and cur_gen[0] not in next_gen:
                 next_gen[-1] = cur_gen[0]
                 next_gen.sort()
 
         fits = [f"{s.fitness:.1f}" for s in next_gen]
         print(f"GEN {len(self.generations) + 1}: {fits}")
+
+        self.elapsed_time += (time.time() - start_time)
 
         return next_gen
 
