@@ -37,6 +37,7 @@ class Ball:
 
                         pt_on_sphere = X + t * V
                         pt_on_sphere = pygame.Vector3(qutils.rotate_pt_about_quat(pt_on_sphere, self.orient))
+                        pt_on_sphere = pygame.Vector3(qutils.rotate_pt_about_vec(pt_on_sphere, (1, 0, 0), -tilt / 180 * math.pi))
                         (r, theta, phi) = pt_on_sphere.as_spherical()
 
                         tx_coords = (int(phi % 360 / 360 * self.texture.get_width()) % self.texture.get_width(),
@@ -66,8 +67,10 @@ if __name__ == "__main__":
     # screen = pygame.display.set_mode((640, 480))
     clock = pygame.Clock()
 
-    texture = pygame.image.load("assets/rainbow.png")
+    texture = pygame.image.load("assets/rainbow_axis.png")
     ball = Ball(32, texture)
+
+    tilt = 90
 
     running = True
     while running:
@@ -75,10 +78,17 @@ if __name__ == "__main__":
             if e.type == pygame.QUIT:
                 running = False
 
-        screen.fill("darkgray")
-        ball.render(screen, (screen.get_width() // 2, screen.get_height() // 2))
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_LSHIFT] and keys[pygame.K_DOWN]:
+            tilt -= 1
+        if keys[pygame.K_LSHIFT] and keys[pygame.K_UP]:
+            tilt += 1
+        tilt = min(90, max(0, tilt))
 
-        ball.orient = qutils.qmult(ball.orient, qutils.get_rot_quat((0.3, 1.3, 1), math.pi / 30))
+        screen.fill("darkgray")
+        ball.render(screen, (screen.get_width() // 2, screen.get_height() // 2), tilt=tilt)
+
+        # ball.orient = qutils.qmult(ball.orient, qutils.get_rot_quat((0.3, 1.3, 1), math.pi / 30))
 
         pygame.display.flip()
         clock.tick(60)
